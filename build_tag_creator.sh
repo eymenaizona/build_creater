@@ -1,16 +1,15 @@
 #!/bin/bash
-
 # Ensure the script exits on errors
 set -e
 
 # Help message
 usage() {
     echo "Usage: $0 [-r <repo_links>] [-v <build_file>] [-t <tag_prefix>] [-M <major>] [-m <minor>]"
-    echo "  -r: Space-separated list of repository links or paths"
-    echo "  -v: Build version file name (default: build_version.txt)"
-    echo "  -t: Tag prefix (default: build)"
-    echo "  -M: Major version number (default: 1)"
-    echo "  -m: Minor version number (default: 0)"
+    echo " -r: Space-separated list of repository links or paths"
+    echo " -v: Build version file name (default: build_version.txt)"
+    echo " -t: Tag prefix (default: build)"
+    echo " -M: Major version number (default: 1)"
+    echo " -m: Minor version number (default: 0)"
     exit 1
 }
 
@@ -22,14 +21,14 @@ MINOR=0
 
 # Parse options
 while getopts ":r:v:t:M:m:" opt; do
-  case $opt in
+    case $opt in
     r) REPOS=$OPTARG ;;
     v) BUILD_FILE=$OPTARG ;;
     t) TAG_PREFIX=$OPTARG ;;
     M) MAJOR=$OPTARG ;;
     m) MINOR=$OPTARG ;;
     *) usage ;;
-  esac
+    esac
 done
 
 # Check if repositories are provided
@@ -38,11 +37,54 @@ if [ -z "$REPOS" ]; then
     usage
 fi
 
+# Function to update git submodules
+update_submodules() {
+    local repo_path=$1
+    
+    # Check if .gitmodules exists
+    if [ -f "$repo_path/.gitmodules" ]; then
+        echo "Updating submodules in $repo_path"
+        cd "$repo_path"
+        
+        # Initialize submodules if not already initialized
+        git submodule init
+        
+        # Update submodules recursively
+        git submodule update --init --recursive
+        
+        # Pull latest changes for submodules
+        git submodule foreach git pull
+        
+        cd - > /dev/null
+    else
+        echo "No submodules found in $repo_path"
+    fi
+}
+
+# Function to find next available tag version
+find_next_tag_version() {
+    local TAG_PREFIX=$1
+    local MAJOR=$2
+    local MINOR=$3
+    local BASE_BUILD=$4
+
+    local NEW_BUILD=$BASE_BUILD
+    local TAG="${TAG_PREFIX}-${MAJOR}.${MINOR}.${NEW_BUILD}"
+
+    # Keep incrementing build number until we find an unused tag
+    while git tag | grep -q "^$TAG$"; do
+        NEW_BUILD=$((NEW_BUILD + 1))
+        TAG="${TAG_PREFIX}-${MAJOR}.${MINOR}.${NEW_BUILD}"
+    done
+
+    echo "$NEW_BUILD"
+}
+
 # Function to process each repository
 process_repo() {
-    REPO=$1
+    local REPO=$1
     echo "Processing repository: $REPO"
-
+    
     # Clone or navigate to the repository
     if [[ "$REPO" == http* ]]; then
         TMP_DIR=$(mktemp -d)
@@ -51,35 +93,70 @@ process_repo() {
     else
         cd "$REPO"
     fi
-
+    
+    # Attempt to update submodules first
+    update_submodules "."
+    
+    # Attempt to checkout `main` branch
+    CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+    if git branch -a | grep -q "remotes/origin/main"; then
+        BRANCH="main"
+        
+        # Only switch branches if not already on main
+        if [[ "$CURRENT_BRANCH" != "$BRANCH" ]]; then
+            git checkout "$BRANCH"
+            echo "Switched to branch: $BRANCH"
+        fi
+    else
+        echo "No 'main' branch found. Staying on the current branch: $CURRENT_BRANCH"
+    fi
+    
     # Increment build version
     if [[ -f "$BUILD_FILE" ]]; then
         # Parse the last build number
-        LAST_BUILD=$(grep "Version:" "$BUILD_FILE" | tail -n 1 | awk -F'.' '{print $NF}')
+        LAST_BUILD=$(grep "Version:" "$BUILD_FILE" | tail -n 1 | awk -F'.' '{print $NF}'| tr -cd '0-9')
         BUILD=${LAST_BUILD:-0}
-        NEW_BUILD=$((BUILD + 1))
-
-        # Get the current timestamp and last commit message
+        
+        # Find next available build number
+        NEW_BUILD=$(find_next_tag_version "$TAG_PREFIX" "$MAJOR" "$MINOR" "$BUILD")
+        
         TIMESTAMP=$(date +"%Y-%m-%d %H:%M:%S") # Human-readable format
         LAST_COMMIT_MSG=$(git log -1 --pretty=%B | tr -d '\n')
-
+        
+        # Escape special characters for safe echo
+        LAST_COMMIT_MSG_ESCAPED=$(echo "$LAST_COMMIT_MSG" | sed 's/"/\\"/g')
+        
         # Append the new version log
-        echo "Version: ${MAJOR}.${MINOR}.${NEW_BUILD}, Timestamp: $TIMESTAMP, Last Commit: $LAST_COMMIT_MSG" >> "$BUILD_FILE"
-
+        echo "Version: ${MAJOR}.${MINOR}.${NEW_BUILD}, Timestamp: $TIMESTAMP, Last Commit: \"$LAST_COMMIT_MSG_ESCAPED\"" >> "$BUILD_FILE"
         echo "Appended new version log to $BUILD_FILE."
+        
+        # Prepare tag
+        TAG="${TAG_PREFIX}-${MAJOR}.${MINOR}.${NEW_BUILD}"
     else
         echo "Error: $BUILD_FILE not found in $REPO!"
         cd - > /dev/null
         return 1
     fi
-
+    
     # Commit and tag changes
     git add "$BUILD_FILE"
     git commit -m "Increment version to ${MAJOR}.${MINOR}.${NEW_BUILD}"
-    TAG="${TAG_PREFIX}-${MAJOR}.${MINOR}.${NEW_BUILD}"
-    git tag -a "$TAG" -m "Version ${MAJOR}.${MINOR}.${NEW_BUILD} - $LAST_COMMIT_MSG"
-    git push origin main --tags
-
+    
+    echo "Creating tag: $TAG" # Debug output
+    if [ -n "$TAG" ]; then
+        # Create tag
+        git tag "$TAG"
+        
+        # Push tag
+        if ! git push origin "$TAG"; then
+            echo "Failed to push tag $TAG to remote"
+            exit 1
+        fi
+    else
+        echo "Error: Tag name is empty"
+        exit 1
+    fi
+    
     # Return to original directory
     cd - > /dev/null
 }
