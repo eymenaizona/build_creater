@@ -38,6 +38,7 @@ done
 if [ -z "$REPOS" ]; then
     echo "Error: No repositories specified."
     usage
+    exit
 fi
 
 # Function to update git submodules
@@ -47,10 +48,10 @@ update_submodules() {
     if [ -f "$repo_path/.gitmodules" ]; then
         echo "Updating submodules in $repo_path"
         cd "$repo_path"
-        # Update submodules recursively
-        git submodule update --init --recursive
+        # Update submodules
+        git submodule update --init --remote --rebase
         # Pull latest changes for submodules
-        cd - > /dev/null
+        cd -
     else
         echo "No submodules found in $repo_path"
     fi
@@ -93,8 +94,8 @@ revert_to_tag() {
 process_repo() {
     local REPO=$1
     echo "Processing repository: $REPO"
-    
-    # Clone or navigate to the repository
+
+    # Clone or navigate to the repository  delete git clone
     if [[ "$REPO" == http* ]]; then
         TMP_DIR=$(mktemp -d)
         git clone "$REPO" "$TMP_DIR"
@@ -102,20 +103,21 @@ process_repo() {
     else
         cd "$REPO"
     fi
-    
+
     # Attempt to update submodules first
     update_submodules "."
-    
+
     # Revert to the specified tag, if provided
     if [ -n "$REVERT_TO_TAG" ]; then
         revert_to_tag "$REPO" "$REVERT_TO_TAG"
+        return 1
     fi
-    
+    # change to develop branch
     # Attempt to checkout `main` branch
     CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
     if git branch -a | grep -q "remotes/origin/main"; then
         BRANCH="main"
-        
+
         # Only switch branches if not already on main
         if [[ "$CURRENT_BRANCH" != "$BRANCH" ]]; then
             git checkout "$BRANCH"
@@ -124,30 +126,31 @@ process_repo() {
     else
         echo "No 'main' branch found. Staying on the current branch: $CURRENT_BRANCH"
     fi
-    
+
     # Increment build version
     if [[ -f "$BUILD_FILE" ]]; then
+        # debug here
         # Parse the last build number
         LAST_BUILD=$(grep "Version:" "$BUILD_FILE" | tail -n 1 | awk -F'.' '{print $NF}'| tr -cd '0-9')
         BUILD=${LAST_BUILD:-0}
-        
+
         # Find next available build number
         NEW_BUILD=$(find_next_tag_version "$TAG_PREFIX" "$MAJOR" "$MINOR" "$BUILD")
-        
+
         TIMESTAMP=$(date +"%Y-%m-%d %H:%M:%S") # Human-readable format
         LAST_COMMIT_MSG=$(git log -1 --pretty=%B | tr -d '\n')
-        
+
         # Escape special characters for safe echo
         LAST_COMMIT_MSG_ESCAPED=$(echo "$LAST_COMMIT_MSG" | sed 's/"/\\"/g')
-        
+
         # Append the new version log
-        echo "Version: ${MAJOR}.${MINOR}.${NEW_BUILD}, Timestamp: $TIMESTAMP, Last Commit: \"$LAST_COMMIT_MSG_ESCAPED\"" >> "$BUILD_FILE"
+        echo "$TIMESTAMP, ${MAJOR}.${MINOR}.${NEW_BUILD}" >> "$BUILD_FILE"
         echo "Appended new version log to $BUILD_FILE."
         # Prepare tag
         TAG="${TAG_PREFIX}-${MAJOR}.${MINOR}.${NEW_BUILD}"
     else
         echo "Error: $BUILD_FILE not found in $REPO!"
-        cd - > /dev/null
+        cd -
         return 1
     fi
 
@@ -169,9 +172,9 @@ process_repo() {
         echo "Error: Tag name is empty"
         exit 1
     fi
-    
+
     # Return to original directory
-    cd - > /dev/null
+    cd -
 }
 
 # Process each repository
