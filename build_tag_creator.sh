@@ -138,10 +138,6 @@ process_repo() {
         NEW_BUILD=$(find_next_tag_version "$TAG_PREFIX" "$MAJOR" "$MINOR" "$BUILD")
 
         TIMESTAMP=$(date +"%Y-%m-%d %H:%M:%S") # Human-readable format
-        LAST_COMMIT_MSG=$(git log -1 --pretty=%B | tr -d '\n')
-
-        # Escape special characters for safe echo
-        LAST_COMMIT_MSG_ESCAPED=$(echo "$LAST_COMMIT_MSG" | sed 's/"/\\"/g')
 
         # Append the new version log
         echo "$TIMESTAMP, ${MAJOR}.${MINOR}.${NEW_BUILD}" >> "$BUILD_FILE"
