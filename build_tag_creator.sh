@@ -56,6 +56,33 @@ update_submodules() {
         echo "No submodules found in $repo_path"
     fi
 }
+# Function to get the latest tag
+get_latest_git_tag() {
+    local TAG_PREFIX=$1
+
+    # Find the latest tag matching the prefix
+    local LATEST_TAG=$(git tag --list "${TAG_PREFIX}-*" | sort -V | tail -n 1)
+    echo "$LATEST_TAG"
+}
+
+# Parse the latest tag
+LATEST_TAG=$(get_latest_git_tag "$TAG_PREFIX")
+
+if [[ -n "$LATEST_TAG" ]]; then
+    # Extract version numbers from the tag
+    MAJOR=$(echo "$LATEST_TAG" | cut -d'-' -f2 | cut -d. -f1)
+    MINOR=$(echo "$LATEST_TAG" | cut -d'-' -f2 | cut -d. -f2)
+    BUILD=$(echo "$LATEST_TAG" | cut -d'-' -f2 | cut -d. -f3)
+    BUILD=$((BUILD + 1)) # Increment the build number
+else
+    # No existing tags, start with default
+    MAJOR=1
+    MINOR=0
+    BUILD=0
+fi
+
+echo "Tagging with version: ${MAJOR}.${MINOR}.${BUILD}"
+TAG="${TAG_PREFIX}-${MAJOR}.${MINOR}.${BUILD}"
 
 # Function to find next available tag version
 find_next_tag_version() {
