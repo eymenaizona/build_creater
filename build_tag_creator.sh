@@ -40,6 +40,25 @@ if [ -z "$REPOS" ]; then
     usage
     exit
 fi
+# Determine initial version based on inputs or existing tags
+if [[ -z "$(git tag --list "${TAG_PREFIX}-*")" ]]; then
+    if [[ -n "$MAJOR" && -n "$MINOR" ]]; then
+        VERSION="${MAJOR}.${MINOR}.0"
+        echo "No tags found. Using provided version: $VERSION"
+    else
+        VERSION="1.0.0"
+        echo "No tags found. Using default version: $VERSION"
+    fi
+else
+    LATEST_TAG=$(get_latest_git_tag "$TAG_PREFIX")
+    MAJOR=$(echo "$LATEST_TAG" | cut -d'-' -f2 | cut -d. -f1)
+    MINOR=$(echo "$LATEST_TAG" | cut -d'-' -f2 | cut -d. -f2)
+    BUILD=$(echo "$LATEST_TAG" | cut -d'-' -f2 | cut -d. -f3)
+    BUILD=$((BUILD + 1))
+    VERSION="${MAJOR}.${MINOR}.${BUILD}"
+    echo "Latest tag found: $LATEST_TAG. Incrementing to: $VERSION"
+fi
+
 
 # Function to update git submodules
 update_submodules() {
@@ -65,21 +84,6 @@ get_latest_git_tag() {
     echo "$LATEST_TAG"
 }
 
-# Parse the latest tag
-LATEST_TAG=$(get_latest_git_tag "$TAG_PREFIX")
-
-if [[ -n "$LATEST_TAG" ]]; then
-    # Extract version numbers from the tag
-    MAJOR=$(echo "$LATEST_TAG" | cut -d'-' -f2 | cut -d. -f1)
-    MINOR=$(echo "$LATEST_TAG" | cut -d'-' -f2 | cut -d. -f2)
-    BUILD=$(echo "$LATEST_TAG" | cut -d'-' -f2 | cut -d. -f3)
-    BUILD=$((BUILD + 1)) # Increment the build number
-else
-    # No existing tags, start with default
-    MAJOR=1
-    MINOR=0
-    BUILD=0
-fi
 
 echo "Tagging with version: ${MAJOR}.${MINOR}.${BUILD}"
 TAG="${TAG_PREFIX}-${MAJOR}.${MINOR}.${BUILD}"
