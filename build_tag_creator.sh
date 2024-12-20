@@ -40,6 +40,64 @@ if [ -z "$REPOS" ]; then
     usage
     exit
 fi
+
+# Function to get the latest tag
+get_latest_git_tag() {
+    local TAG_PREFIX=$1
+    local LATEST_TAG=$(git tag --list "${TAG_PREFIX}-*" | sort -V | tail -n 1)
+    echo "$LATEST_TAG"
+}
+
+# Function to sync repository with remote
+sync_with_remote() {
+    local BRANCH=$1
+    git fetch origin
+    if git diff-index --quiet HEAD --; then
+        git reset --hard "origin/$BRANCH"
+    else
+        git stash
+        git reset --hard "origin/$BRANCH"
+        git stash pop || true
+    fi
+}
+
+# Function to ensure build file exists
+ensure_build_file() {
+    local BUILD_FILE=$1
+    if [ ! -f "$BUILD_FILE" ]; then
+        echo "Creating $BUILD_FILE"
+        touch "$BUILD_FILE"
+        git add "$BUILD_FILE"
+        git commit -m "Initialize $BUILD_FILE"
+    fi
+}
+
+# Function to update git submodules
+update_submodules() {
+    local repo_path=$1
+    if [ -f "$repo_path/.gitmodules" ]; then
+        echo "Updating submodules in $repo_path"
+        cd "$repo_path"
+        git submodule update --init --remote --rebase
+
+        # Sync each submodule with its remote
+        git submodule foreach '
+            if git rev-parse --verify origin/main >/dev/null 2>&1; then
+                git checkout main
+                git fetch origin
+                git reset --hard origin/main
+            elif git rev-parse --verify origin/master >/dev/null 2>&1; then
+                git checkout master
+                git fetch origin
+                git reset --hard origin/master
+            fi
+        '
+        cd -
+    else
+        echo "No submodules found in $repo_path"
+    fi
+}
+
 # Determine initial version based on inputs or existing tags
 if [[ -z "$(git tag --list "${TAG_PREFIX}-*")" ]]; then
     if [[ -n "$MAJOR" && -n "$MINOR" ]]; then
@@ -59,35 +117,6 @@ else
     echo "Latest tag found: $LATEST_TAG. Incrementing to: $VERSION"
 fi
 
-
-# Function to update git submodules
-update_submodules() {
-    local repo_path=$1
-    # Check if .gitmodules exists
-    if [ -f "$repo_path/.gitmodules" ]; then
-        echo "Updating submodules in $repo_path"
-        cd "$repo_path"
-        # Update submodules
-        git submodule update --init --remote --rebase
-        # Pull latest changes for submodules
-        cd -
-    else
-        echo "No submodules found in $repo_path"
-    fi
-}
-# Function to get the latest tag
-get_latest_git_tag() {
-    local TAG_PREFIX=$1
-
-    # Find the latest tag matching the prefix
-    local LATEST_TAG=$(git tag --list "${TAG_PREFIX}-*" | sort -V | tail -n 1)
-    echo "$LATEST_TAG"
-}
-
-
-echo "Tagging with version: ${MAJOR}.${MINOR}.${BUILD}"
-TAG="${TAG_PREFIX}-${MAJOR}.${MINOR}.${BUILD}"
-
 # Function to find next available tag version
 find_next_tag_version() {
     local TAG_PREFIX=$1
@@ -98,7 +127,6 @@ find_next_tag_version() {
     local NEW_BUILD=$BASE_BUILD
     local TAG="${TAG_PREFIX}-${MAJOR}.${MINOR}.${NEW_BUILD}"
 
-    # Keep incrementing build number until we find an unused tag
     while git tag | grep -q "^$TAG$"; do
         NEW_BUILD=$((NEW_BUILD + 1))
         TAG="${TAG_PREFIX}-${MAJOR}.${MINOR}.${NEW_BUILD}"
@@ -112,7 +140,6 @@ revert_to_tag() {
     local REPO=$1
     local TARGET_TAG=$2
 
-    # Check if the target tag exists
     if git show-ref --tags --verify --quiet "refs/tags/$TARGET_TAG"; then
         echo "Reverting $REPO to tag $TARGET_TAG"
         git checkout "$TARGET_TAG"
@@ -121,12 +148,27 @@ revert_to_tag() {
     fi
 }
 
+# Function to update submodule versions
+update_submodule_versions() {
+    local VERSION=$1
+    local BUILD_FILE=$2
+    local TAG=$3
+
+    ensure_build_file "$BUILD_FILE"
+    TIMESTAMP=$(date +"%Y-%m-%d %H:%M:%S")
+    echo "$TIMESTAMP, $VERSION" >> "$BUILD_FILE"
+    git add "$BUILD_FILE"
+    git commit -m "Increment version to $VERSION"
+    git tag -f "$TAG"
+    git push origin HEAD --force
+    git push origin "$TAG" --force
+}
+
 # Function to process each repository
 process_repo() {
     local REPO=$1
     echo "Processing repository: $REPO"
 
-    # Clone or navigate to the repository  delete git clone
     if [[ "$REPO" == http* ]]; then
         TMP_DIR=$(mktemp -d)
         git clone "$REPO" "$TMP_DIR"
@@ -135,7 +177,7 @@ process_repo() {
         cd "$REPO"
     fi
 
-    # Attempt to update submodules first
+    # Update and sync submodules first
     update_submodules "."
 
     # Revert to the specified tag, if provided
@@ -143,64 +185,58 @@ process_repo() {
         revert_to_tag "$REPO" "$REVERT_TO_TAG"
         return 1
     fi
-    # change to develop branch
-    # Attempt to checkout `main` branch
+
+    # Switch to main branch if available
     CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
     if git branch -a | grep -q "remotes/origin/main"; then
         BRANCH="main"
-
-        # Only switch branches if not already on main
         if [[ "$CURRENT_BRANCH" != "$BRANCH" ]]; then
             git checkout "$BRANCH"
+            sync_with_remote "$BRANCH"
             echo "Switched to branch: $BRANCH"
         fi
     else
         echo "No 'main' branch found. Staying on the current branch: $CURRENT_BRANCH"
     fi
 
-    # Increment build version
+    # Ensure build file exists and increment version
+    ensure_build_file "$BUILD_FILE"
+
     if [[ -f "$BUILD_FILE" ]]; then
-        # debug here
-        # Parse the last build number
         LAST_BUILD=$(grep "Version:" "$BUILD_FILE" | tail -n 1 | awk -F'.' '{print $NF}'| tr -cd '0-9')
         BUILD=${LAST_BUILD:-0}
-
-        # Find next available build number
         NEW_BUILD=$(find_next_tag_version "$TAG_PREFIX" "$MAJOR" "$MINOR" "$BUILD")
-
-        TIMESTAMP=$(date +"%Y-%m-%d %H:%M:%S") # Human-readable format
-
-        # Append the new version log
+        TIMESTAMP=$(date +"%Y-%m-%d %H:%M:%S")
         echo "$TIMESTAMP, ${MAJOR}.${MINOR}.${NEW_BUILD}" >> "$BUILD_FILE"
         echo "Appended new version log to $BUILD_FILE."
-        # Prepare tag
         TAG="${TAG_PREFIX}-${MAJOR}.${MINOR}.${NEW_BUILD}"
+
+        # Update versions in submodules
+        if [ -f ".gitmodules" ]; then
+            git submodule foreach "$(declare -f update_submodule_versions); update_submodule_versions '${MAJOR}.${MINOR}.${NEW_BUILD}' '$BUILD_FILE' '$TAG'"
+        fi
+
+        # Commit and tag changes in main repository
+        git add "$BUILD_FILE"
+        git commit -m "Increment version to ${MAJOR}.${MINOR}.${NEW_BUILD}"
+        git tag "$TAG"
+
+
+        CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+        if ! git push origin "$CURRENT_BRANCH"; then
+            echo "Failed to push changes to remote branch $CURRENT_BRANCH"
+            exit 1
+        fi
+        if ! git push origin "$TAG"; then
+            echo "Failed to push tag $TAG to remote"
+            exit 1
+        fi
     else
         echo "Error: $BUILD_FILE not found in $REPO!"
         cd -
         return 1
     fi
 
-    # Commit and tag changes
-    git add "$BUILD_FILE"
-    git commit -m "Increment version to ${MAJOR}.${MINOR}.${NEW_BUILD}"
-
-    echo "Creating tag: $TAG" # Debug output
-    if [ -n "$TAG" ]; then
-        # Create tag
-        git tag "$TAG"
-
-        # Push tag
-        if ! git push origin "$TAG"; then
-            echo "Failed to push tag $TAG to remote"
-            exit 1
-        fi
-    else
-        echo "Error: Tag name is empty"
-        exit 1
-    fi
-
-    # Return to original directory
     cd -
 }
 
