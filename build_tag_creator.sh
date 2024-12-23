@@ -130,6 +130,24 @@ revert_to_tag() {
     if git show-ref --tags --verify --quiet "refs/tags/$TARGET_TAG"; then
         echo "Reverting $REPO to tag $TARGET_TAG"
         git checkout "$TARGET_TAG"
+        if [ -f ".gitmodules" ]; then
+            echo "Reverting direct submodules to tag $TARGET_TAG"
+            # Initialize submodules if they haven't been initialized
+            git submodule init
+            # For each direct submodule, checkout the same tag
+            git submodule foreach "
+                echo 'Processing submodule: \$name';
+                if git show-ref --tags --verify --quiet 'refs/tags/$TARGET_TAG'; then
+                    git checkout '$TARGET_TAG';
+                    echo 'Successfully reverted \$name to tag $TARGET_TAG';
+                else
+                    echo 'Warning: Tag $TARGET_TAG not found in submodule \$name';
+                fi
+            "
+            # Verify final status
+            echo "Final submodule status:"
+            git submodule status
+        fi
     else
         echo "Tag $TARGET_TAG not found in $REPO. Skipping revert."
     fi
