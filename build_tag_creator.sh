@@ -232,8 +232,8 @@ process_repo() {
 
     if [[ -f "$BUILD_FILE" ]]; then
         TIMESTAMP=$(date +"%Y-%m-%d %H:%M:%S")
-        USER=$(whoami)
-        echo "$TIMESTAMP, $USER, $VERSION" >> "$BUILD_FILE"
+        USER=$(pwd -P)
+        echo "$TIMESTAMP, $USER, $TAG" >> "$BUILD_FILE"
         echo "Appended new version log to $BUILD_FILE."
 
         # Update versions in submodules
