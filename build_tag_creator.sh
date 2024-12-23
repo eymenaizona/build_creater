@@ -17,8 +17,6 @@ usage() {
 # Default values
 BUILD_FILE="build_version.txt"
 TAG_PREFIX="build"
-MAJOR=1
-MINOR=0
 REVERT_TO_TAG=""
 
 # Parse options
@@ -44,8 +42,35 @@ fi
 # Function to get the latest tag
 get_latest_git_tag() {
     local TAG_PREFIX=$1
+    git fetch --tags
     local LATEST_TAG=$(git tag --list "${TAG_PREFIX}-*" | sort -V | tail -n 1)
     echo "$LATEST_TAG"
+}
+
+parse_version_from_tag() {
+    local TAG=$1
+    if [[ -n "$TAG" ]]; then
+        echo "$TAG" | sed -n "s/^${TAG_PREFIX}-\([0-9]\+\)\.\([0-9]\+\)\.\([0-9]\+\)$/\1 \2 \3/p"
+    fi
+}
+
+
+# Function to find next available tag version
+find_next_tag_version() {
+    local TAG_PREFIX=$1
+    local MAJOR=$2
+    local MINOR=$3
+    local BASE_BUILD=$4
+
+    local NEW_BUILD=$BASE_BUILD
+    local TAG="${TAG_PREFIX}-${MAJOR}.${MINOR}.${NEW_BUILD}"
+
+    while git tag | grep -q "^$TAG$"; do
+        NEW_BUILD=$((NEW_BUILD + 1))
+        TAG="${TAG_PREFIX}-${MAJOR}.${MINOR}.${NEW_BUILD}"
+    done
+
+    echo "$NEW_BUILD"
 }
 
 # Function to sync repository with remote
@@ -97,44 +122,6 @@ update_submodules() {
         echo "No submodules found in $repo_path"
     fi
 }
-
-# Determine initial version based on inputs or existing tags
-if [[ -z "$(git tag --list "${TAG_PREFIX}-*")" ]]; then
-    if [[ -n "$MAJOR" && -n "$MINOR" ]]; then
-        VERSION="${MAJOR}.${MINOR}.0"
-        echo "No tags found. Using provided version: $VERSION"
-    else
-        VERSION="1.0.0"
-        echo "No tags found. Using default version: $VERSION"
-    fi
-else
-    LATEST_TAG=$(get_latest_git_tag "$TAG_PREFIX")
-    MAJOR=$(echo "$LATEST_TAG" | cut -d'-' -f2 | cut -d. -f1)
-    MINOR=$(echo "$LATEST_TAG" | cut -d'-' -f2 | cut -d. -f2)
-    BUILD=$(echo "$LATEST_TAG" | cut -d'-' -f2 | cut -d. -f3)
-    BUILD=$((BUILD + 1))
-    VERSION="${MAJOR}.${MINOR}.${BUILD}"
-    echo "Latest tag found: $LATEST_TAG. Incrementing to: $VERSION"
-fi
-
-# Function to find next available tag version
-find_next_tag_version() {
-    local TAG_PREFIX=$1
-    local MAJOR=$2
-    local MINOR=$3
-    local BASE_BUILD=$4
-
-    local NEW_BUILD=$BASE_BUILD
-    local TAG="${TAG_PREFIX}-${MAJOR}.${MINOR}.${NEW_BUILD}"
-
-    while git tag | grep -q "^$TAG$"; do
-        NEW_BUILD=$((NEW_BUILD + 1))
-        TAG="${TAG_PREFIX}-${MAJOR}.${MINOR}.${NEW_BUILD}"
-    done
-
-    echo "$NEW_BUILD"
-}
-
 # Function to revert to a specific tag
 revert_to_tag() {
     local REPO=$1
@@ -198,28 +185,47 @@ process_repo() {
     else
         echo "No 'main' branch found. Staying on the current branch: $CURRENT_BRANCH"
     fi
+    # Determine version after entering the repository
+    LATEST_TAG=$(get_latest_git_tag "$TAG_PREFIX")
+    if [[ -n "$LATEST_TAG" ]]; then
+        if [[ -n "$MAJOR" && -n "$MINOR" ]]; then
+            TAG_MAJOR=$MAJOR
+            TAG_MINOR=$MINOR
+            BASE_BUILD=0
+        else
+            TAG_MAJOR=$(echo "$LATEST_TAG" | cut -d'-' -f2 | cut -d. -f1)
+            TAG_MINOR=$(echo "$LATEST_TAG" | cut -d'-' -f2 | cut -d. -f2)
+            BASE_BUILD=$(echo "$LATEST_TAG" | cut -d'-' -f2 | cut -d. -f3)
+        fi
+    else
+        TAG_MAJOR=${MAJOR:-1}
+        TAG_MINOR=${MINOR:-0}
+        BASE_BUILD=0
+    fi
+
+    # Find the next available build number
+    NEW_BUILD=$(find_next_tag_version "$TAG_PREFIX" "$TAG_MAJOR" "$TAG_MINOR" "$BASE_BUILD")
+    VERSION="${TAG_MAJOR}.${TAG_MINOR}.${NEW_BUILD}"
+    echo "Using version: $VERSION"
+    TAG="${TAG_PREFIX}-${VERSION}"
 
     # Ensure build file exists and increment version
     ensure_build_file "$BUILD_FILE"
 
     if [[ -f "$BUILD_FILE" ]]; then
-        LAST_BUILD=$(grep "Version:" "$BUILD_FILE" | tail -n 1 | awk -F'.' '{print $NF}'| tr -cd '0-9')
-        BUILD=${LAST_BUILD:-0}
-        NEW_BUILD=$(find_next_tag_version "$TAG_PREFIX" "$MAJOR" "$MINOR" "$BUILD")
         TIMESTAMP=$(date +"%Y-%m-%d %H:%M:%S")
         USER=$(whoami)
-        echo "$TIMESTAMP, ${MAJOR}.${MINOR}.${NEW_BUILD}, $USER" >> "$BUILD_FILE"
+        echo "$TIMESTAMP, $USER, $VERSION" >> "$BUILD_FILE"
         echo "Appended new version log to $BUILD_FILE."
-        TAG="${TAG_PREFIX}-${MAJOR}.${MINOR}.${NEW_BUILD}"
 
         # Update versions in submodules
         if [ -f ".gitmodules" ]; then
-            git submodule foreach "$(declare -f update_submodule_versions); update_submodule_versions '${MAJOR}.${MINOR}.${NEW_BUILD}' '$BUILD_FILE' '$TAG'"
+            git submodule foreach "$(declare -f update_submodule_versions); update_submodule_versions '${TAG_MAJOR}.${TAG_MINOR}.${NEW_BUILD}' '$BUILD_FILE' '$TAG'"
         fi
 
         # Commit and tag changes in main repository
         git add "$BUILD_FILE"
-        git commit -m "Increment version to ${MAJOR}.${MINOR}.${NEW_BUILD}"
+        git commit -m "Increment version to ${TAG_MAJOR}.${TAG_MINOR}.${NEW_BUILD}"
         git tag "$TAG"
 
 
