@@ -207,7 +207,8 @@ process_repo() {
         BUILD=${LAST_BUILD:-0}
         NEW_BUILD=$(find_next_tag_version "$TAG_PREFIX" "$MAJOR" "$MINOR" "$BUILD")
         TIMESTAMP=$(date +"%Y-%m-%d %H:%M:%S")
-        echo "$TIMESTAMP, ${MAJOR}.${MINOR}.${NEW_BUILD}" >> "$BUILD_FILE"
+        USER=$(whoami)
+        echo "$TIMESTAMP, ${MAJOR}.${MINOR}.${NEW_BUILD}, $USER" >> "$BUILD_FILE"
         echo "Appended new version log to $BUILD_FILE."
         TAG="${TAG_PREFIX}-${MAJOR}.${MINOR}.${NEW_BUILD}"
 
