@@ -105,17 +105,11 @@ update_submodules() {
         cd "$repo_path"
         git submodule update --init --remote --rebase
 
-        # Sync each submodule with its remote
+        # Sync each submodule with its remote on the current branch
         git submodule foreach '
-            if git rev-parse --verify origin/main >/dev/null 2>&1; then
-                git checkout main
-                git fetch origin
-                git reset --hard origin/main
-            elif git rev-parse --verify origin/master >/dev/null 2>&1; then
-                git checkout master
-                git fetch origin
-                git reset --hard origin/master
-            fi
+            current_branch=$(git rev-parse --abbrev-ref HEAD)
+            git fetch origin
+            git reset --hard origin/"$current_branch"
         '
         cd -
     else
@@ -158,10 +152,10 @@ update_submodule_versions() {
     local VERSION=$1
     local BUILD_FILE=$2
     local TAG=$3
-
+    current_branch=$(git rev-parse --abbrev-ref HEAD)
     ensure_build_file "$BUILD_FILE"
     TIMESTAMP=$(date +"%Y-%m-%d %H:%M:%S")
-    echo "$TIMESTAMP, $TAG, $USER, $CURRENT_BRANCH" >> "$BUILD_FILE"
+    echo "$TIMESTAMP, $TAG, $USER, $current_branch" >> "$BUILD_FILE"
     git add "$BUILD_FILE"
     git commit -m "Increment version to $VERSION"
     git tag -f "$TAG"
