@@ -219,7 +219,7 @@ process_repo() {
 
     if [[ -f "$BUILD_FILE" ]]; then
         TIMESTAMP=$(date +"%Y-%m-%d %H:%M:%S")
-        USER=$(pwd -P)
+        USER=$(basename "$(pwd)")
         echo "$TIMESTAMP, $TAG, $USER, $CURRENT_BRANCH" >> "$BUILD_FILE"
         echo "Appended new version log to $BUILD_FILE."
 
