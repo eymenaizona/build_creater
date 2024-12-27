@@ -161,7 +161,7 @@ update_submodule_versions() {
 
     ensure_build_file "$BUILD_FILE"
     TIMESTAMP=$(date +"%Y-%m-%d %H:%M:%S")
-    echo "$TIMESTAMP, $VERSION" >> "$BUILD_FILE"
+    echo "$TIMESTAMP, $TAG, $USER, $CURRENT_BRANCH" >> "$BUILD_FILE"
     git add "$BUILD_FILE"
     git commit -m "Increment version to $VERSION"
     git tag -f "$TAG"
