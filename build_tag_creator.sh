@@ -191,18 +191,11 @@ process_repo() {
         return 1
     fi
 
-    # Switch to main branch if available
+    # Switch to the current branch and sync with remote
     CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
-    if git branch -a | grep -q "remotes/origin/main"; then
-        BRANCH="main"
-        if [[ "$CURRENT_BRANCH" != "$BRANCH" ]]; then
-            git checkout "$BRANCH"
-            sync_with_remote "$BRANCH"
-            echo "Switched to branch: $BRANCH"
-        fi
-    else
-        echo "No 'main' branch found. Staying on the current branch: $CURRENT_BRANCH"
-    fi
+    git checkout "$CURRENT_BRANCH"
+    sync_with_remote "$CURRENT_BRANCH"
+    echo "Staying on the current branch: $CURRENT_BRANCH"
     # Determine version after entering the repository
     LATEST_TAG=$(get_latest_git_tag "$TAG_PREFIX")
     if [[ -n "$LATEST_TAG" ]]; then
@@ -233,7 +226,7 @@ process_repo() {
     if [[ -f "$BUILD_FILE" ]]; then
         TIMESTAMP=$(date +"%Y-%m-%d %H:%M:%S")
         USER=$(pwd -P)
-        echo "$TIMESTAMP, $USER, $TAG" >> "$BUILD_FILE"
+        echo "$TIMESTAMP, $TAG, $USER, $CURRENT_BRANCH" >> "$BUILD_FILE"
         echo "Appended new version log to $BUILD_FILE."
 
         # Update versions in submodules
