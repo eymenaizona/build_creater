@@ -230,6 +230,8 @@ process_repo() {
 
         # Commit and tag changes in main repository
         git add "$BUILD_FILE"
+        git add .gitmodules
+        git add $(git submodule foreach --quiet 'echo $path')
         git commit -m "Increment version to ${TAG_MAJOR}.${TAG_MINOR}.${NEW_BUILD}"
         git tag "$TAG"
 
